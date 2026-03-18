@@ -18,8 +18,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  LineChart, 
-  Line, 
   XAxis, 
   YAxis, 
   CartesianGrid, 
@@ -28,6 +26,7 @@ import {
   AreaChart,
   Area
 } from 'recharts';
+import { storage } from './lib/storage';
 
 // Types
 interface Product {
@@ -81,23 +80,13 @@ export default function App() {
   const [newAdSpend, setNewAdSpend] = useState({ product_id: '', date: new Date().toISOString().split('T')[0], amount: '' });
   const [newOrder, setNewOrder] = useState({ product_id: '', date: new Date().toISOString().split('T')[0], customer_name: '', customer_phone: '', status: 'pending' });
 
-  const fetchData = async () => {
+  const fetchData = () => {
     setLoading(true);
     try {
-      const [prodRes, orderRes, timelineRes, adSpendRes] = await Promise.all([
-        fetch('/api/stats'),
-        fetch('/api/orders-list'),
-        fetch('/api/timeline'),
-        fetch('/api/ad-spend-list')
-      ]);
-      const prodData = await prodRes.json();
-      const orderData = await orderRes.json();
-      const timelineData = await timelineRes.json();
-      const adSpendData = await adSpendRes.json();
-      setProducts(prodData);
-      setOrders(orderData);
-      setTimeline(timelineData);
-      setAdSpendHistory(adSpendData);
+      setProducts(storage.getStats());
+      setOrders(storage.getOrders());
+      setTimeline(storage.getTimeline());
+      setAdSpendHistory(storage.getAdSpend());
     } catch (error) {
       console.error("Failed to fetch data", error);
     } finally {
@@ -109,78 +98,62 @@ export default function App() {
     fetchData();
   }, []);
 
-  const handleAddProduct = async (e: React.FormEvent) => {
+  const handleAddProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/products', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: newProduct.name,
-        cost_price: parseFloat(newProduct.cost_price),
-        delivery_fee: parseFloat(newProduct.delivery_fee),
-        selling_price: parseFloat(newProduct.selling_price)
-      })
+    storage.addProduct({
+      name: newProduct.name,
+      cost_price: parseFloat(newProduct.cost_price),
+      delivery_fee: parseFloat(newProduct.delivery_fee),
+      selling_price: parseFloat(newProduct.selling_price)
     });
     setNewProduct({ name: '', cost_price: '', delivery_fee: '', selling_price: '' });
     fetchData();
   };
 
-  const handleDeleteProduct = async (id: number) => {
+  const handleDeleteProduct = (id: number) => {
     if (!confirm('Are you sure? This will delete all ad spend and orders for this product.')) return;
-    await fetch(`/api/products/${id}`, { method: 'DELETE' });
+    storage.deleteProduct(id);
     fetchData();
   };
 
-  const handleAddAdSpend = async (e: React.FormEvent) => {
+  const handleAddAdSpend = (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/ad-spend', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        product_id: parseInt(newAdSpend.product_id),
-        date: newAdSpend.date,
-        amount: parseFloat(newAdSpend.amount)
-      })
+    storage.addAdSpend({
+      product_id: parseInt(newAdSpend.product_id),
+      date: newAdSpend.date,
+      amount: parseFloat(newAdSpend.amount)
     });
     setNewAdSpend({ ...newAdSpend, amount: '' });
     fetchData();
   };
 
-  const handleDeleteAdSpend = async (id: number) => {
+  const handleDeleteAdSpend = (id: number) => {
     if (!confirm('Are you sure you want to delete this ad spend entry?')) return;
-    await fetch(`/api/ad-spend/${id}`, { method: 'DELETE' });
+    storage.deleteAdSpend(id);
     fetchData();
   };
 
-  const handleAddOrder = async (e: React.FormEvent) => {
+  const handleAddOrder = (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        product_id: parseInt(newOrder.product_id),
-        date: newOrder.date,
-        customer_name: newOrder.customer_name,
-        customer_phone: newOrder.customer_phone,
-        status: newOrder.status
-      })
+    storage.addOrder({
+      product_id: parseInt(newOrder.product_id),
+      date: newOrder.date,
+      customer_name: newOrder.customer_name,
+      customer_phone: newOrder.customer_phone,
+      status: newOrder.status
     });
     setNewOrder({ ...newOrder, customer_name: '', customer_phone: '' });
     fetchData();
   };
 
-  const handleDeleteOrder = async (id: number) => {
+  const handleDeleteOrder = (id: number) => {
     if (!confirm('Are you sure you want to delete this order?')) return;
-    await fetch(`/api/orders/${id}`, { method: 'DELETE' });
+    storage.deleteOrder(id);
     fetchData();
   };
 
-  const handleUpdateOrderStatus = async (id: number, status: string) => {
-    await fetch(`/api/orders/${id}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
+  const handleUpdateOrderStatus = (id: number, status: string) => {
+    storage.updateOrderStatus(id, status);
     fetchData();
   };
 

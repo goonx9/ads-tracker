@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ecom Profit & Ad Tracker - Standalone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-[#F8F9FA] text-[#1A1A1A]">
+    <div id="root"></div>
+
+    <script>
+        const { useState, useEffect, useMemo } = React;
+        const { 
+            AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
+        } = Recharts;
+
+        // --- Storage Logic ---
+        const STORAGE_KEYS = {
+            PRODUCTS: 'ecom_products',
+            AD_SPEND: 'ecom_ad_spend',
+            ORDERS: 'ecom_orders'
+        };
+
+        const getStorage = (key) => {
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : [];
+        };
+
+        const setStorage = (key, data) => {
+            localStorage.setItem(key, JSON.stringify(data));
+        };
+
+        const storage = {
+            getProducts: () => getStorage(STORAGE_KEYS.PRODUCTS),
+            addProduct: (product) => {
+                const products = getStorage(STORAGE_KEYS.PRODUCTS);
+                const newProduct = { ...product, id: Date.now() };
+                setStorage(STORAGE_KEYS.PRODUCTS, [...products, newProduct]);
+                return newProduct;
+            },
+            deleteProduct: (id) => {
+                const products = getStorage(STORAGE_KEYS.PRODUCTS).filter(p => p.id !== id);
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND).filter(a => a.product_id !== id);
+                const orders = getStorage(STORAGE_KEYS.ORDERS).filter(o => o.product_id !== id);
+                setStorage(STORAGE_KEYS.PRODUCTS, products);
+                setStorage(STORAGE_KEYS.AD_SPEND, adSpend);
+                setStorage(STORAGE_KEYS.ORDERS, orders);
+            },
+            getAdSpend: () => {
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND);
+                const products = getStorage(STORAGE_KEYS.PRODUCTS);
+                return adSpend.map(a => ({
+                    ...a,
+                    product_name: products.find(p => p.id === a.product_id)?.name || 'Unknown'
+                })).sort((a, b) => b.date.localeCompare(a.date));
+            },
+            addAdSpend: (entry) => {
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND);
+                const newEntry = { ...entry, id: Date.now() };
+                setStorage(STORAGE_KEYS.AD_SPEND, [...adSpend, newEntry]);
+            },
+            deleteAdSpend: (id) => {
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND).filter(a => a.id !== id);
+                setStorage(STORAGE_KEYS.AD_SPEND, adSpend);
+            },
+            getOrders: () => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS);
+                const products = getStorage(STORAGE_KEYS.PRODUCTS);
+                return orders.map(o => {
+                    const p = products.find(prod => prod.id === o.product_id);
+                    return {
+                        ...o,
+                        product_name: p?.name || 'Unknown',
+                        selling_price: p?.selling_price || 0
+                    };
+                }).sort((a, b) => b.date.localeCompare(a.date));
+            },
+            addOrder: (order) => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS);
+                const newOrder = { ...order, id: Date.now() };
+                setStorage(STORAGE_KEYS.ORDERS, [...orders, newOrder]);
+            },
+            deleteOrder: (id) => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS).filter(o => o.id !== id);
+                setStorage(STORAGE_KEYS.ORDERS, orders);
+            },
+            updateOrderStatus: (id, status) => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS).map(o => 
+                    o.id === id ? { ...o, status } : o
+                );
+                setStorage(STORAGE_KEYS.ORDERS, orders);
+            }
+        };
+
+        // --- Components ---
+        function Icon({ name, size = 20, className = "" }) {
+            useEffect(() => {
+                lucide.createIcons();
+            }, [name]);
+            return `<i data-lucide="${name}" style="width: ${size}px; height: ${size}px;" class="${className}"></i>`;
+        }
+
+        // Note: In UMD React, we use dangerouslySetInnerHTML for Lucide icons or just SVG strings.
+        // For simplicity in this standalone, we'll use a small helper.
+        const LucideIcon = ({ name, size = 20, className = "" }) => {
+            return React.createElement('i', {
+                'data-lucide': name,
+                style: { width: size, height: size },
+                className: className
+            });
+        };
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [products, setProducts] = useState([]);
+            const [orders, setOrders] = useState([]);
+            const [adSpendHistory, setAdSpendHistory] = useState([]);
+            const [loading, setLoading] = useState(false);
+
+            const [newProduct, setNewProduct] = useState({ name: '', cost_price: '', delivery_fee: '', selling_price: '' });
+            const [newAdSpend, setNewAdSpend] = useState({ product_id: '', date: new Date().toISOString().split('T')[0], amount: '' });
+            const [newOrder, setNewOrder] = useState({ product_id: '', date: new Date().toISOString().split('T')[0], customer_name: '', customer_phone: '', status: 'pending' });
+
+            const refreshData = () => {
+                setProducts(storage.getProducts());
+                setOrders(storage.getOrders());
+                setAdSpendHistory(storage.getAdSpend());
+                setTimeout(() => lucide.createIcons(), 0);
+            };
+
+            useEffect(() => {
+                refreshData();
+            }, []);
+
+            const stats = useMemo(() => {
+                return products.map(p => {
+                    const totalAds = getStorage(STORAGE_KEYS.AD_SPEND)
+                        .filter(a => a.product_id === p.id)
+                        .reduce((sum, a) => sum + Number(a.amount), 0);
+                    const confirmed = orders.filter(o => o.product_id === p.id && o.status === 'confirmed');
+                    const revenue = confirmed.length * p.selling_price;
+                    const profit = revenue - (confirmed.length * p.cost_price) - (confirmed.length * p.delivery_fee) - totalAds;
+                    return { ...p, totalAds, orderCount: confirmed.length, revenue, profit, roas: totalAds > 0 ? (revenue / totalAds).toFixed(2) : 0 };
+                });
+            }, [products, orders, adSpendHistory]);
+
+            const timeline = useMemo(() => {
+                const data = [];
+                const today = new Date();
+                for (let i = 29; i >= 0; i--) {
+                    const d = new Date();
+                    d.setDate(today.getDate() - i);
+                    const dateStr = d.toISOString().split('T')[0];
+                    const dailyAds = getStorage(STORAGE_KEYS.AD_SPEND).filter(a => a.date === dateStr).reduce((s, a) => s + Number(a.amount), 0);
+                    const dailyRev = orders.filter(o => o.date === dateStr && o.status === 'confirmed').reduce((s, o) => s + Number(o.selling_price), 0);
+                    data.push({ date: dateStr, revenue: dailyRev, ad_spend: dailyAds });
+                }
+                return data;
+            }, [orders, adSpendHistory]);
+
+            const totalRevenue = stats.reduce((s, p) => s + p.revenue, 0);
+            const totalProfit = stats.reduce((s, p) => s + p.profit, 0);
+            const totalAds = stats.reduce((s, p) => s + p.totalAds, 0);
+            const avgROAS = totalAds > 0 ? (totalRevenue / totalAds).toFixed(2) : '0.00';
+
+            return React.createElement('div', { className: "min-h-screen flex" },
+                // Sidebar
+                React.createElement('aside', { className: "w-64 bg-white border-r border-[#E9ECEF] flex flex-col fixed h-full" },
+                    React.createElement('div', { className: "p-6 border-b border-[#E9ECEF]" },
+                        React.createElement('h1', { className: "text-xl font-bold flex items-center gap-2" },
+                            React.createElement(LucideIcon, { name: "trending-up", className: "text-emerald-600" }),
+                            "EcomTracker"
+                        )
+                    ),
+                    React.createElement('nav', { className: "p-4 space-y-2" },
+                        ['dashboard', 'products', 'entry', 'orders'].map(tab => 
+                            React.createElement('button', {
+                                key: tab,
+                                onClick: () => { setActiveTab(tab); setTimeout(() => lucide.createIcons(), 0); },
+                                className: `w-full flex items-center gap-3 px-4 py-3 rounded-xl capitalize ${activeTab === tab ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'text-[#6C757D] hover:bg-[#F8F9FA]'}`
+                            }, 
+                                React.createElement(LucideIcon, { name: tab === 'dashboard' ? 'layout-dashboard' : tab === 'products' ? 'package' : tab === 'entry' ? 'plus-circle' : 'users' }),
+                                tab
+                            )
+                        )
+                    )
+                ),
+                // Main
+                React.createElement('main', { className: "ml-64 flex-1 p-8" },
+                    React.createElement('header', { className: "mb-8" },
+                        React.createElement('h2', { className: "text-2xl font-bold capitalize" }, activeTab),
+                        React.createElement('p', { className: "text-sm text-[#6C757D]" }, "Manage your e-commerce performance")
+                    ),
+
+                    activeTab === 'dashboard' && React.createElement('div', { className: "space-y-6" },
+                        React.createElement('div', { className: "grid grid-cols-4 gap-4" },
+                            React.createElement(StatCard, { title: "Revenue", value: "₦" + totalRevenue.toLocaleString(), icon: "dollar-sign" }),
+                            React.createElement(StatCard, { title: "Profit", value: "₦" + totalProfit.toLocaleString(), icon: "trending-up", color: totalProfit >= 0 ? "text-emerald-600" : "text-red-600" }),
+                            React.createElement(StatCard, { title: "Ad Spend", value: "₦" + totalAds.toLocaleString(), icon: "shopping-cart" }),
+                            React.createElement(StatCard, { title: "ROAS", value: avgROAS + "x", icon: "activity" })
+                        ),
+                        React.createElement('div', { className: "bg-white p-6 rounded-2xl border border-[#E9ECEF]" },
+                            React.createElement('h3', { className: "font-bold mb-6" }, "Timeline"),
+                            React.createElement('div', { className: "h-64" },
+                                React.createElement(ResponsiveContainer, { width: "100%", height: "100%" },
+                                    React.createElement(AreaChart, { data: timeline },
+                                        React.createElement(CartesianGrid, { strokeDasharray: "3 3", vertical: false }),
+                                        React.createElement(XAxis, { dataKey: "date", hide: true }),
+                                        React.createElement(YAxis, { hide: true }),
+                                        React.createElement(Tooltip, {}),
+                                        React.createElement(Area, { type: "monotone", dataKey: "revenue", stroke: "#10b981", fill: "#10b981", fillOpacity: 0.1 }),
+                                        React.createElement(Area, { type: "monotone", dataKey: "ad_spend", stroke: "#f97316", fill: "#f97316", fillOpacity: 0.1 })
+                                    )
+                                )
+                            )
+                        ),
+                        React.createElement('div', { className: "bg-white rounded-2xl border border-[#E9ECEF] overflow-hidden" },
+                            React.createElement('table', { className: "w-full text-left" },
+                                React.createElement('thead', { className: "bg-[#F8F9FA] text-xs uppercase" },
+                                    React.createElement('tr', {},
+                                        ['Product', 'Orders', 'Revenue', 'Ads', 'Profit', 'ROAS'].map(h => React.createElement('th', { className: "px-6 py-4" }, h))
+                                    )
+                                ),
+                                React.createElement('tbody', { className: "divide-y divide-[#E9ECEF]" },
+                                    stats.map(p => React.createElement('tr', { key: p.id },
+                                        React.createElement('td', { className: "px-6 py-4 font-medium" }, p.name),
+                                        React.createElement('td', { className: "px-6 py-4" }, p.orderCount),
+                                        React.createElement('td', { className: "px-6 py-4" }, "₦" + p.revenue.toLocaleString()),
+                                        React.createElement('td', { className: "px-6 py-4" }, "₦" + p.totalAds.toLocaleString()),
+                                        React.createElement('td', { className: "px-6 py-4 font-bold " + (p.profit >= 0 ? "text-emerald-600" : "text-red-600") }, "₦" + p.profit.toLocaleString()),
+                                        React.createElement('td', { className: "px-6 py-4" }, p.roas + "x")
+                                    ))
+                                )
+                            )
+                        )
+                    ),
+
+                    activeTab === 'products' && React.createElement('div', { className: "grid grid-cols-3 gap-8" },
+                        React.createElement('div', { className: "col-span-1 bg-white p-6 rounded-2xl border border-[#E9ECEF]" },
+                            React.createElement('h3', { className: "font-bold mb-4" }, "Add Product"),
+                            React.createElement('form', { 
+                                onSubmit: (e) => {
+                                    e.preventDefault();
+                                    storage.addProduct({ ...newProduct, cost_price: Number(newProduct.cost_price), delivery_fee: Number(newProduct.delivery_fee), selling_price: Number(newProduct.selling_price) });
+                                    setNewProduct({ name: '', cost_price: '', delivery_fee: '', selling_price: '' });
+                                    refreshData();
+                                },
+                                className: "space-y-4"
+                            },
+                                React.createElement(Input, { label: "Name", value: newProduct.name, onChange: (v) => setNewProduct({...newProduct, name: v}) }),
+                                React.createElement(Input, { label: "Cost", type: "number", value: newProduct.cost_price, onChange: (v) => setNewProduct({...newProduct, cost_price: v}) }),
+                                React.createElement(Input, { label: "Delivery", type: "number", value: newProduct.delivery_fee, onChange: (v) => setNewProduct({...newProduct, delivery_fee: v}) }),
+                                React.createElement(Input, { label: "Selling", type: "number", value: newProduct.selling_price, onChange: (v) => setNewProduct({...newProduct, selling_price: v}) }),
+                                React.createElement('button', { type: "submit", className: "w-full bg-emerald-600 text-white py-2 rounded-lg font-bold" }, "Create")
+                            )
+                        ),
+                        React.createElement('div', { className: "col-span-2 space-y-4" },
+                            products.map(p => React.createElement('div', { key: p.id, className: "bg-white p-4 rounded-xl border border-[#E9ECEF] flex justify-between items-center" },
+                                React.createElement('div', {},
+                                    React.createElement('h4', { className: "font-bold" }, p.name),
+                                    React.createElement('p', { className: "text-xs text-[#6C757D]" }, `Cost: ₦${p.cost_price} | Sell: ₦${p.selling_price}`)
+                                ),
+                                React.createElement('button', { onClick: () => { storage.deleteProduct(p.id); refreshData(); }, className: "text-red-400" }, React.createElement(LucideIcon, { name: "trash-2", size: 18 }))
+                            ))
+                        )
+                    ),
+
+                    activeTab === 'entry' && React.createElement('div', { className: "space-y-8" },
+                        React.createElement('div', { className: "grid grid-cols-2 gap-8" },
+                            React.createElement('div', { className: "bg-white p-6 rounded-2xl border border-[#E9ECEF]" },
+                                React.createElement('h3', { className: "font-bold mb-4" }, "Record Ads"),
+                                React.createElement('form', {
+                                    onSubmit: (e) => {
+                                        e.preventDefault();
+                                        storage.addAdSpend({ product_id: Number(newAdSpend.product_id), date: newAdSpend.date, amount: Number(newAdSpend.amount) });
+                                        setNewAdSpend({ ...newAdSpend, amount: '' });
+                                        refreshData();
+                                    },
+                                    className: "space-y-4"
+                                },
+                                    React.createElement(Select, { label: "Product", value: newAdSpend.product_id, options: products.map(p => ({ label: p.name, value: p.id })), onChange: (v) => setNewAdSpend({...newAdSpend, product_id: v}) }),
+                                    React.createElement(Input, { label: "Date", type: "date", value: newAdSpend.date, onChange: (v) => setNewAdSpend({...newAdSpend, date: v}) }),
+                                    React.createElement(Input, { label: "Amount", type: "number", value: newAdSpend.amount, onChange: (v) => setNewAdSpend({...newAdSpend, amount: v}) }),
+                                    React.createElement('button', { type: "submit", className: "w-full bg-black text-white py-2 rounded-lg font-bold" }, "Save")
+                                )
+                            ),
+                            React.createElement('div', { className: "bg-white p-6 rounded-2xl border border-[#E9ECEF]" },
+                                React.createElement('h3', { className: "font-bold mb-4" }, "New Order"),
+                                React.createElement('form', {
+                                    onSubmit: (e) => {
+                                        e.preventDefault();
+                                        storage.addOrder({ product_id: Number(newOrder.product_id), date: newOrder.date, customer_name: newOrder.customer_name, customer_phone: newOrder.customer_phone, status: newOrder.status });
+                                        setNewOrder({ ...newOrder, customer_name: '', customer_phone: '' });
+                                        refreshData();
+                                    },
+                                    className: "space-y-4"
+                                },
+                                    React.createElement(Select, { label: "Product", value: newOrder.product_id, options: products.map(p => ({ label: p.name, value: p.id })), onChange: (v) => setNewOrder({...newOrder, product_id: v}) }),
+                                    React.createElement(Input, { label: "Date", type: "date", value: newOrder.date, onChange: (v) => setNewOrder({...newOrder, date: v}) }),
+                                    React.createElement(Input, { label: "Customer", value: newOrder.customer_name, onChange: (v) => setNewOrder({...newOrder, customer_name: v}) }),
+                                    React.createElement(Select, { label: "Status", value: newOrder.status, options: [{label: 'Pending', value: 'pending'}, {label: 'Confirmed', value: 'confirmed'}], onChange: (v) => setNewOrder({...newOrder, status: v}) }),
+                                    React.createElement('button', { type: "submit", className: "w-full bg-emerald-600 text-white py-2 rounded-lg font-bold" }, "Record")
+                                )
+                            )
+                        )
+                    ),
+
+                    activeTab === 'orders' && React.createElement('div', { className: "bg-white rounded-2xl border border-[#E9ECEF] overflow-hidden" },
+                        React.createElement('table', { className: "w-full text-left" },
+                            React.createElement('thead', { className: "bg-[#F8F9FA] text-xs uppercase" },
+                                React.createElement('tr', {},
+                                    ['Date', 'Customer', 'Product', 'Status', 'Action'].map(h => React.createElement('th', { className: "px-6 py-4" }, h))
+                                )
+                            ),
+                            React.createElement('tbody', { className: "divide-y divide-[#E9ECEF]" },
+                                orders.map(o => React.createElement('tr', { key: o.id },
+                                    React.createElement('td', { className: "px-6 py-4 text-sm" }, o.date),
+                                    React.createElement('td', { className: "px-6 py-4 font-medium" }, o.customer_name),
+                                    React.createElement('td', { className: "px-6 py-4 text-sm" }, o.product_name),
+                                    React.createElement('td', { className: "px-6 py-4" }, 
+                                        React.createElement('span', { className: `px-2 py-1 rounded text-xs font-bold ${o.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}` }, o.status.toUpperCase())
+                                    ),
+                                    React.createElement('td', { className: "px-6 py-4 flex gap-2" },
+                                        React.createElement('button', { onClick: () => { storage.updateOrderStatus(o.id, o.status === 'confirmed' ? 'pending' : 'confirmed'); refreshData(); }, className: "text-xs border px-2 py-1 rounded" }, "Flip"),
+                                        React.createElement('button', { onClick: () => { storage.deleteOrder(o.id); refreshData(); }, className: "text-red-400" }, React.createElement(LucideIcon, { name: "trash-2", size: 16 }))
+                                    )
+                                ))
+                            )
+                        )
+                    )
+                )
+            );
+        }
+
+        function StatCard({ title, value, icon, color = "" }) {
+            return React.createElement('div', { className: "bg-white p-6 rounded-2xl border border-[#E9ECEF]" },
+                React.createElement('div', { className: "flex justify-between mb-4" },
+                    React.createElement('div', { className: "p-2 bg-[#F8F9FA] rounded-lg" }, React.createElement(LucideIcon, { name: icon })),
+                ),
+                React.createElement('h4', { className: "text-sm text-[#6C757D]" }, title),
+                React.createElement('p', { className: "text-2xl font-bold " + color }, value)
+            );
+        }
+
+        function Input({ label, type = "text", value, onChange }) {
+            return React.createElement('div', { className: "space-y-1" },
+                React.createElement('label', { className: "text-[10px] font-bold uppercase text-[#6C757D]" }, label),
+                React.createElement('input', { 
+                    type, value, 
+                    onChange: (e) => onChange(e.target.value),
+                    className: "w-full px-3 py-2 bg-[#F8F9FA] border border-[#E9ECEF] rounded-lg text-sm"
+                })
+            );
+        }
+
+        function Select({ label, value, options, onChange }) {
+            return React.createElement('div', { className: "space-y-1" },
+                React.createElement('label', { className: "text-[10px] font-bold uppercase text-[#6C757D]" }, label),
+                React.createElement('select', { 
+                    value, 
+                    onChange: (e) => onChange(e.target.value),
+                    className: "w-full px-3 py-2 bg-[#F8F9FA] border border-[#E9ECEF] rounded-lg text-sm"
+                },
+                    React.createElement('option', { value: "" }, "Select..."),
+                    options.map(o => React.createElement('option', { key: o.value, value: o.value }, o.label))
+                )
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+    </script>
+</body>
+</html>
