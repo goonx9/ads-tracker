@@ -33,7 +33,7 @@ export const storage = {
     setStorage(STORAGE_KEYS.ORDERS, orders);
   },
 
-  getAdSpend: () => {
+  getAdSpendHistory: () => {
     const adSpend = getStorage(STORAGE_KEYS.AD_SPEND);
     const products = getStorage(STORAGE_KEYS.PRODUCTS);
     return adSpend.map((a: any) => ({
