@@ -1,13 +1,461 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ecom Profit & Ad Tracker</title>
-  </head>
-  <body>
+    <!-- CDNs -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-[#F8F9FA] text-[#1A1A1A]">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
 
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { 
+            AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
+        } = Recharts;
+
+        // --- Storage Logic ---
+        const STORAGE_KEYS = {
+            PRODUCTS: 'ecom_products',
+            AD_SPEND: 'ecom_ad_spend',
+            ORDERS: 'ecom_orders'
+        };
+
+        const getStorage = (key) => {
+            try {
+                const data = localStorage.getItem(key);
+                return data ? JSON.parse(data) : [];
+            } catch (e) {
+                console.error('Storage error:', e);
+                return [];
+            }
+        };
+
+        const setStorage = (key, data) => {
+            try {
+                localStorage.setItem(key, JSON.stringify(data));
+            } catch (e) {
+                console.error('Storage error:', e);
+            }
+        };
+
+        const storage = {
+            getProducts: () => getStorage(STORAGE_KEYS.PRODUCTS),
+            addProduct: (product) => {
+                const products = getStorage(STORAGE_KEYS.PRODUCTS);
+                const newProduct = { ...product, id: Date.now() };
+                setStorage(STORAGE_KEYS.PRODUCTS, [...products, newProduct]);
+                return newProduct;
+            },
+            deleteProduct: (id) => {
+                const products = getStorage(STORAGE_KEYS.PRODUCTS).filter(p => p.id !== id);
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND).filter(a => a.product_id !== id);
+                const orders = getStorage(STORAGE_KEYS.ORDERS).filter(o => o.product_id !== id);
+                setStorage(STORAGE_KEYS.PRODUCTS, products);
+                setStorage(STORAGE_KEYS.AD_SPEND, adSpend);
+                setStorage(STORAGE_KEYS.ORDERS, orders);
+            },
+            getAdSpendHistory: () => {
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND);
+                const products = getStorage(STORAGE_KEYS.PRODUCTS);
+                return adSpend.map(a => ({
+                    ...a,
+                    product_name: products.find(p => p.id === a.product_id)?.name || 'Unknown'
+                })).sort((a, b) => b.date.localeCompare(a.date));
+            },
+            addAdSpend: (entry) => {
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND);
+                const newEntry = { ...entry, id: Date.now() };
+                setStorage(STORAGE_KEYS.AD_SPEND, [...adSpend, newEntry]);
+            },
+            deleteAdSpend: (id) => {
+                const adSpend = getStorage(STORAGE_KEYS.AD_SPEND).filter(a => a.id !== id);
+                setStorage(STORAGE_KEYS.AD_SPEND, adSpend);
+            },
+            getOrders: () => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS);
+                const products = getStorage(STORAGE_KEYS.PRODUCTS);
+                return orders.map(o => {
+                    const p = products.find(prod => prod.id === o.product_id);
+                    return {
+                        ...o,
+                        product_name: p?.name || 'Unknown',
+                        selling_price: p?.selling_price || 0
+                    };
+                }).sort((a, b) => b.date.localeCompare(a.date));
+            },
+            addOrder: (order) => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS);
+                const newOrder = { ...order, id: Date.now() };
+                setStorage(STORAGE_KEYS.ORDERS, [...orders, newOrder]);
+            },
+            deleteOrder: (id) => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS).filter(o => o.id !== id);
+                setStorage(STORAGE_KEYS.ORDERS, orders);
+            },
+            updateOrderStatus: (id, status) => {
+                const orders = getStorage(STORAGE_KEYS.ORDERS).map(o => 
+                    o.id === id ? { ...o, status } : o
+                );
+                setStorage(STORAGE_KEYS.ORDERS, orders);
+            }
+        };
+
+        // --- UI Components ---
+        const LucideIcon = ({ name, size = 20, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size, display: 'inline-block' }} className={className}></i>;
+        };
+
+        const StatCard = ({ title, value, icon, color = "" }) => (
+            <div className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm">
+                <div className="flex justify-between mb-4">
+                    <div className="p-2 bg-[#F8F9FA] rounded-lg">
+                        <LucideIcon name={icon} />
+                    </div>
+                </div>
+                <h4 className="text-sm text-[#6C757D] font-medium uppercase tracking-wider">{title}</h4>
+                <p className={`text-2xl font-bold tracking-tight ${color}`}>{value}</p>
+            </div>
+        );
+
+        const Input = ({ label, type = "text", value, onChange, placeholder = "" }) => (
+            <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase text-[#6C757D] tracking-widest">{label}</label>
+                <input 
+                    type={type} value={value} 
+                    placeholder={placeholder}
+                    onChange={(e) => onChange(e.target.value)}
+                    className="w-full px-4 py-2 bg-[#F8F9FA] border border-[#E9ECEF] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                />
+            </div>
+        );
+
+        const Select = ({ label, value, options, onChange }) => (
+            <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase text-[#6C757D] tracking-widest">{label}</label>
+                <select 
+                    value={value} 
+                    onChange={(e) => onChange(e.target.value)}
+                    className="w-full px-4 py-2 bg-[#F8F9FA] border border-[#E9ECEF] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                >
+                    <option value="">Select Option</option>
+                    {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+            </div>
+        );
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [products, setProducts] = useState([]);
+            const [orders, setOrders] = useState([]);
+            const [adSpendHistory, setAdSpendHistory] = useState([]);
+
+            const [newProduct, setNewProduct] = useState({ name: '', cost_price: '', delivery_fee: '', selling_price: '' });
+            const [newAdSpend, setNewAdSpend] = useState({ product_id: '', date: new Date().toISOString().split('T')[0], amount: '' });
+            const [newOrder, setNewOrder] = useState({ product_id: '', date: new Date().toISOString().split('T')[0], customer_name: '', customer_phone: '', status: 'pending' });
+
+            const refreshData = () => {
+                setProducts(storage.getProducts());
+                setOrders(storage.getOrders());
+                setAdSpendHistory(storage.getAdSpendHistory());
+                setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 0);
+            };
+
+            useEffect(() => {
+                refreshData();
+            }, []);
+
+            const stats = useMemo(() => {
+                return products.map(p => {
+                    const totalAds = adSpendHistory
+                        .filter(a => Number(a.product_id) === p.id)
+                        .reduce((sum, a) => sum + Number(a.amount), 0);
+                    const confirmed = orders.filter(o => Number(o.product_id) === p.id && o.status === 'confirmed');
+                    const revenue = confirmed.length * p.selling_price;
+                    const profit = revenue - (confirmed.length * p.cost_price) - (confirmed.length * p.delivery_fee) - totalAds;
+                    return { ...p, totalAds, orderCount: confirmed.length, revenue, profit, roas: totalAds > 0 ? (revenue / totalAds).toFixed(2) : 0 };
+                });
+            }, [products, orders, adSpendHistory]);
+
+            const timeline = useMemo(() => {
+                const data = [];
+                const today = new Date();
+                for (let i = 29; i >= 0; i--) {
+                    const d = new Date();
+                    d.setDate(today.getDate() - i);
+                    const dateStr = d.toISOString().split('T')[0];
+                    const dailyAds = adSpendHistory.filter(a => a.date === dateStr).reduce((s, a) => s + Number(a.amount), 0);
+                    const dailyRev = orders.filter(o => o.date === dateStr && o.status === 'confirmed').reduce((s, o) => s + Number(o.selling_price), 0);
+                    data.push({ date: dateStr, revenue: dailyRev, ad_spend: dailyAds });
+                }
+                return data;
+            }, [orders, adSpendHistory]);
+
+            const totalRevenue = stats.reduce((s, p) => s + p.revenue, 0);
+            const totalProfit = stats.reduce((s, p) => s + p.profit, 0);
+            const totalAds = stats.reduce((s, p) => s + p.totalAds, 0);
+            const avgROAS = totalAds > 0 ? (totalRevenue / totalAds).toFixed(2) : '0.00';
+
+            return (
+                <div className="min-h-screen flex">
+                    {/* Sidebar */}
+                    <aside className="w-64 bg-white border-r border-[#E9ECEF] flex flex-col fixed h-full z-10">
+                        <div className="p-6 border-b border-[#E9ECEF]">
+                            <h1 className="text-xl font-bold flex items-center gap-2">
+                                <LucideIcon name="trending-up" className="text-emerald-600" />
+                                EcomTracker
+                            </h1>
+                        </div>
+                        <nav className="p-4 space-y-2">
+                            {['dashboard', 'products', 'entry', 'orders'].map(tab => (
+                                <button
+                                    key={tab}
+                                    onClick={() => { setActiveTab(tab); setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 0); }}
+                                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl capitalize transition-all ${activeTab === tab ? 'bg-emerald-50 text-emerald-700 font-bold shadow-sm' : 'text-[#6C757D] hover:bg-[#F8F9FA]'}`}
+                                >
+                                    <LucideIcon name={tab === 'dashboard' ? 'layout-dashboard' : tab === 'products' ? 'package' : tab === 'entry' ? 'plus-circle' : 'users'} />
+                                    {tab}
+                                </button>
+                            ))}
+                        </nav>
+                        <div className="mt-auto p-4 border-t border-[#E9ECEF]">
+                            <div className="bg-emerald-50 p-4 rounded-xl">
+                                <p className="text-[10px] font-bold text-emerald-700 uppercase">Status</p>
+                                <p className="text-xs text-emerald-600 font-medium">Standalone Mode</p>
+                            </div>
+                        </div>
+                    </aside>
+
+                    {/* Main */}
+                    <main className="ml-64 flex-1 p-8">
+                        <header className="mb-8 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-2xl font-bold capitalize tracking-tight">{activeTab}</h2>
+                                <p className="text-sm text-[#6C757D]">Real-time performance tracking</p>
+                            </div>
+                            <button onClick={refreshData} className="p-2 hover:bg-white border border-transparent hover:border-[#E9ECEF] rounded-lg">
+                                <LucideIcon name="refresh-cw" className="text-[#6C757D]" />
+                            </button>
+                        </header>
+
+                        {activeTab === 'dashboard' && (
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                    <StatCard title="Revenue" value={"₦" + totalRevenue.toLocaleString()} icon="dollar-sign" />
+                                    <StatCard title="Profit" value={"₦" + totalProfit.toLocaleString()} icon="trending-up" color={totalProfit >= 0 ? "text-emerald-600" : "text-red-600"} />
+                                    <StatCard title="Ad Spend" value={"₦" + totalAds.toLocaleString()} icon="shopping-cart" />
+                                    <StatCard title="Avg ROAS" value={avgROAS + "x"} icon="activity" />
+                                </div>
+                                <div className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm">
+                                    <h3 className="font-bold text-lg mb-6">Timeline</h3>
+                                    <div className="h-64">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={timeline}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F3F5" />
+                                                <XAxis dataKey="date" hide />
+                                                <YAxis hide />
+                                                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                                                <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={2} />
+                                                <Area type="monotone" dataKey="ad_spend" stroke="#f97316" fill="transparent" strokeWidth={2} />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                                <div className="bg-white rounded-2xl border border-[#E9ECEF] shadow-sm overflow-hidden">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-[#F8F9FA] text-[#6C757D] text-xs uppercase font-bold">
+                                            <tr>
+                                                {['Product', 'Orders', 'Revenue', 'Ads', 'Profit', 'ROAS'].map(h => <th key={h} className="px-6 py-4">{h}</th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[#E9ECEF]">
+                                            {stats.length === 0 ? <tr><td colSpan="6" className="px-6 py-8 text-center text-[#6C757D]">No products yet</td></tr> :
+                                            stats.map(p => (
+                                                <tr key={p.id} className="hover:bg-[#F8F9FA] transition-colors">
+                                                    <td className="px-6 py-4 font-medium">{p.name}</td>
+                                                    <td className="px-6 py-4">{p.orderCount}</td>
+                                                    <td className="px-6 py-4">₦{p.revenue.toLocaleString()}</td>
+                                                    <td className="px-6 py-4">₦{p.totalAds.toLocaleString()}</td>
+                                                    <td className={`px-6 py-4 font-bold ${p.profit >= 0 ? "text-emerald-600" : "text-red-600"}`}>₦{p.profit.toLocaleString()}</td>
+                                                    <td className="px-6 py-4"><span className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded text-xs font-bold">{p.roas}x</span></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'products' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                <div className="lg:col-span-1">
+                                    <div className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm sticky top-8">
+                                        <h3 className="font-bold text-lg mb-6">Add Product</h3>
+                                        <form 
+                                            onSubmit={(e) => {
+                                                e.preventDefault();
+                                                if (!newProduct.name) return;
+                                                storage.addProduct({ ...newProduct, cost_price: Number(newProduct.cost_price), delivery_fee: Number(newProduct.delivery_fee), selling_price: Number(newProduct.selling_price) });
+                                                setNewProduct({ name: '', cost_price: '', delivery_fee: '', selling_price: '' });
+                                                refreshData();
+                                            }}
+                                            className="space-y-4"
+                                        >
+                                            <Input label="Name" value={newProduct.name} onChange={(v) => setNewProduct({...newProduct, name: v})} />
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <Input label="Cost" type="number" value={newProduct.cost_price} onChange={(v) => setNewProduct({...newProduct, cost_price: v})} />
+                                                <Input label="Delivery" type="number" value={newProduct.delivery_fee} onChange={(v) => setNewProduct({...newProduct, delivery_fee: v})} />
+                                            </div>
+                                            <Input label="Selling" type="number" value={newProduct.selling_price} onChange={(v) => setNewProduct({...newProduct, selling_price: v})} />
+                                            <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-colors">Create Product</button>
+                                        </form>
+                                    </div>
+                                </div>
+                                <div className="lg:col-span-2 space-y-4">
+                                    {products.length === 0 ? <div className="bg-white p-12 rounded-2xl border border-dashed border-[#CED4DA] text-center"><p className="text-[#6C757D]">No products added yet</p></div> :
+                                    products.map(p => (
+                                        <div key={p.id} className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm flex justify-between items-center group">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600"><LucideIcon name="package" size={24} /></div>
+                                                <div>
+                                                    <h4 className="font-bold text-lg">{p.name}</h4>
+                                                    <p className="text-xs text-[#6C757D] font-medium uppercase">{`Cost: ₦${p.cost_price} | Sell: ₦${p.selling_price}`}</p>
+                                                </div>
+                                            </div>
+                                            <button onClick={() => { storage.deleteProduct(p.id); refreshData(); }} className="p-2 text-[#ADB5BD] hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><LucideIcon name="trash-2" size={20} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'entry' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <div className="space-y-6">
+                                    <div className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm">
+                                        <h3 className="font-bold text-lg mb-6 flex items-center gap-2"><LucideIcon name="history" className="text-orange-600" />Record Ads</h3>
+                                        <form 
+                                            onSubmit={(e) => {
+                                                e.preventDefault();
+                                                if (!newAdSpend.product_id || !newAdSpend.amount) return;
+                                                storage.addAdSpend({ product_id: Number(newAdSpend.product_id), date: newAdSpend.date, amount: Number(newAdSpend.amount) });
+                                                setNewAdSpend({ ...newAdSpend, amount: '' });
+                                                refreshData();
+                                            }}
+                                            className="space-y-4"
+                                        >
+                                            <Select label="Product" value={newAdSpend.product_id} options={products.map(p => ({ label: p.name, value: p.id }))} onChange={(v) => setNewAdSpend({...newAdSpend, product_id: v})} />
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <Input label="Date" type="date" value={newAdSpend.date} onChange={(v) => setNewAdSpend({...newAdSpend, date: v})} />
+                                                <Input label="Amount (₦)" type="number" value={newAdSpend.amount} onChange={(v) => setNewAdSpend({...newAdSpend, amount: v})} />
+                                            </div>
+                                            <button type="submit" className="w-full bg-black text-white py-3 rounded-xl font-bold hover:bg-zinc-800 transition-colors">Save Ad Spend</button>
+                                        </form>
+                                    </div>
+                                    <div className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm">
+                                        <h3 className="font-bold mb-4">Recent Ad Spend</h3>
+                                        <div className="space-y-3 max-h-64 overflow-y-auto no-scrollbar">
+                                            {adSpendHistory.length === 0 ? <p className="text-center text-[#6C757D] py-4">No entries yet</p> :
+                                            adSpendHistory.map(a => (
+                                                <div key={a.id} className="flex justify-between items-center p-3 bg-[#F8F9FA] rounded-lg border border-[#E9ECEF]">
+                                                    <div>
+                                                        <p className="text-sm font-bold">{a.product_name}</p>
+                                                        <p className="text-[10px] text-[#6C757D]">{a.date}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-4">
+                                                        <span className="font-bold text-orange-600">₦{a.amount.toLocaleString()}</span>
+                                                        <button onClick={() => { storage.deleteAdSpend(a.id); refreshData(); }} className="text-red-400 hover:text-red-600"><LucideIcon name="trash-2" size={14} /></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-white p-6 rounded-2xl border border-[#E9ECEF] shadow-sm">
+                                    <h3 className="font-bold text-lg mb-6 flex items-center gap-2"><LucideIcon name="plus-circle" className="text-emerald-600" />New Order</h3>
+                                    <form 
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            if (!newOrder.product_id || !newOrder.customer_name) return;
+                                            storage.addOrder({ product_id: Number(newOrder.product_id), date: newOrder.date, customer_name: newOrder.customer_name, customer_phone: newOrder.customer_phone, status: newOrder.status });
+                                            setNewOrder({ ...newOrder, customer_name: '', customer_phone: '' });
+                                            refreshData();
+                                        }}
+                                        className="space-y-4"
+                                    >
+                                        <Select label="Product" value={newOrder.product_id} options={products.map(p => ({ label: p.name, value: p.id }))} onChange={(v) => setNewOrder({...newOrder, product_id: v})} />
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <Input label="Date" type="date" value={newOrder.date} onChange={(v) => setNewOrder({...newOrder, date: v})} />
+                                            <Select label="Status" value={newOrder.status} options={[{label: 'Pending', value: 'pending'}, {label: 'Confirmed', value: 'confirmed'}]} onChange={(v) => setNewOrder({...newOrder, status: v})} />
+                                        </div>
+                                        <Input label="Customer Name" value={newOrder.customer_name} onChange={(v) => setNewOrder({...newOrder, customer_name: v})} />
+                                        <Input label="Customer Phone" value={newOrder.customer_phone} onChange={(v) => setNewOrder({...newOrder, customer_phone: v})} />
+                                        <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 transition-colors">Record Order</button>
+                                    </form>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'orders' && (
+                            <div className="bg-white rounded-2xl border border-[#E9ECEF] shadow-sm overflow-hidden">
+                                <div className="p-6 border-b border-[#E9ECEF] flex justify-between items-center">
+                                    <h3 className="font-bold">Order History</h3>
+                                    <div className="flex gap-2">
+                                        <span className="px-3 py-1 bg-orange-50 text-orange-700 rounded-full text-xs font-bold">{orders.filter(o => o.status === 'pending').length} Pending</span>
+                                        <span className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">{orders.filter(o => o.status === 'confirmed').length} Confirmed</span>
+                                    </div>
+                                </div>
+                                <table className="w-full text-left">
+                                    <thead className="bg-[#F8F9FA] text-[#6C757D] text-xs uppercase font-bold">
+                                        <tr>
+                                            {['Date', 'Customer', 'Product', 'Status', 'Action'].map(h => <th key={h} className="px-6 py-4">{h}</th>)}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-[#E9ECEF]">
+                                        {orders.length === 0 ? <tr><td colSpan="5" className="px-6 py-12 text-center text-[#6C757D]">No orders recorded yet</td></tr> :
+                                        orders.map(o => (
+                                            <tr key={o.id} className="hover:bg-[#F8F9FA] transition-colors">
+                                                <td className="px-6 py-4 text-sm">{o.date}</td>
+                                                <td className="px-6 py-4">
+                                                    <div className="font-medium">{o.customer_name}</div>
+                                                    <div className="text-xs text-[#6C757D]">{o.customer_phone}</div>
+                                                </td>
+                                                <td className="px-6 py-4 text-sm">{o.product_name}</td>
+                                                <td className="px-6 py-4">
+                                                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${o.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : 'bg-orange-50 text-orange-700'}`}>{o.status}</span>
+                                                </td>
+                                                <td className="px-6 py-4 flex items-center gap-3">
+                                                    <button onClick={() => { storage.updateOrderStatus(o.id, o.status === 'confirmed' ? 'pending' : 'confirmed'); refreshData(); }} className="text-xs font-bold text-emerald-600 hover:underline">Flip Status</button>
+                                                    <button onClick={() => { storage.deleteOrder(o.id); refreshData(); }} className="p-1 text-[#ADB5BD] hover:text-red-500 rounded"><LucideIcon name="trash-2" size={16} /></button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
